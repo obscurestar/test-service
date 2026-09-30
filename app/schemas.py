@@ -1,3 +1,4 @@
+from datetime import date
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -10,3 +11,11 @@ class NewUserRequest(BaseModel):
 
 class HelloRequest(BaseModel):
     user_id: UUID
+
+
+class SpyResponse(BaseModel):
+    user_id: UUID
+    first_name: str
+    last_name: str
+    last_access: date
+    use_count: int

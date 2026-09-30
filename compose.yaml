@@ -5,19 +5,35 @@ services:
       - "6000:6000"
     environment:
       DATABASE_URL: postgresql+psycopg://users:${POSTGRES_PASSWORD}@db:5432/users
+      REPLICA_DATABASE_URL: postgresql+psycopg://users:${POSTGRES_PASSWORD}@replica:5432/users
     depends_on:
-      db:
+      db-init:
+        condition: service_completed_successfully
+      replica:
         condition: service_healthy
     restart: unless-stopped
 
   db:
     image: postgres:16-alpine
+    command:
+      - postgres
+      - -c
+      - wal_level=replica
+      - -c
+      - max_wal_senders=10
+      - -c
+      - max_replication_slots=10
+      - -c
+      - wal_keep_size=256MB
+      - -c
+      - hba_file=/etc/postgresql/pg_hba.conf
     environment:
       POSTGRES_DB: users
       POSTGRES_USER: users
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./db/pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U users -d users"]
       interval: 5s
@@ -25,5 +41,47 @@ services:
       retries: 10
     restart: unless-stopped
 
+  db-init:
+    image: postgres:16-alpine
+    environment:
+      PGHOST: db
+      PGPORT: 5432
+      PGUSER: users
+      PGDATABASE: users
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      REPLICATION_PASSWORD: ${REPLICATION_PASSWORD:-${POSTGRES_PASSWORD}}
+    volumes:
+      - ./db/setup-primary.sql:/setup/setup-primary.sql:ro
+    command:
+      - sh
+      - -c
+      - psql -v ON_ERROR_STOP=1 -v replication_password="$${REPLICATION_PASSWORD}" -f /setup/setup-primary.sql
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  replica:
+    image: postgres:16-alpine
+    entrypoint: ["/bin/sh", "/usr/local/bin/replica-entrypoint.sh"]
+    environment:
+      POSTGRES_USER: users
+      POSTGRES_DB: users
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      REPLICATION_PASSWORD: ${REPLICATION_PASSWORD:-${POSTGRES_PASSWORD}}
+    volumes:
+      - replica_data:/var/lib/postgresql/data
+      - ./db/replica-entrypoint.sh:/usr/local/bin/replica-entrypoint.sh:ro
+    depends_on:
+      db-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U users -d users"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
 volumes:
   postgres_data:
+  replica_data:

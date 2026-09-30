@@ -9,9 +9,9 @@ from sqlalchemy import select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
-from app.database import Base, engine, get_db
+from app.database import Base, engine, get_db, get_replica_db
 from app.models import User
-from app.schemas import HelloRequest, NewUserRequest
+from app.schemas import HelloRequest, NewUserRequest, SpyResponse
 
 
 @asynccontextmanager
@@ -109,3 +109,21 @@ def hello_post(
     request: HelloRequest, db: Annotated[Session, Depends(get_db)]
 ) -> str:
     return greet_user(request.user_id, db)
+
+
+@app.post("/spy", response_model=SpyResponse)
+def spy_post(
+    request: HelloRequest,
+    db: Annotated[Session, Depends(get_replica_db)],
+) -> SpyResponse | PlainTextResponse:
+    user = db.scalar(select(User).where(User.user_id == request.user_id))
+    if user is None:
+        return PlainTextResponse("Invalid User ID")
+
+    return SpyResponse(
+        user_id=user.user_id,
+        first_name=user.first_name,
+        last_name=user.last_name,
+        last_access=user.last_access,
+        use_count=user.use_count,
+    )
